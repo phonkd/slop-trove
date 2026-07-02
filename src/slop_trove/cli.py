@@ -22,7 +22,7 @@ def _batched(seq, n):
 
 def cmd_init_db(_args) -> int:
     cfg = config.load()
-    with db.connect(cfg.db_url) as conn:
+    with db.connect(cfg.db_url, register=False) as conn:
         db.init_schema(conn, cfg.embed_dim)
     print(f"schema ready (dim={cfg.embed_dim}) in {cfg.db_url}")
     return 0
@@ -37,8 +37,8 @@ def cmd_ingest(args) -> int:
     embedder = embed.Embedder(cfg.embed_endpoint, cfg.embed_model, cfg.embed_dim)
     total_new = 0
     seen = 0
-    with db.connect(cfg.db_url) as conn:
-        db.init_schema(conn, cfg.embed_dim)
+    with db.connect(cfg.db_url, register=False) as conn:
+        db.init_schema(conn, cfg.embed_dim)  # registers the vector adapter
         for batch in _batched(discord.parse(args.path), args.batch_size):
             vecs = embedder.embed([r.text for r in batch])
             total_new += db.upsert(conn, zip(batch, vecs))

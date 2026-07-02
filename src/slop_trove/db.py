@@ -19,10 +19,16 @@ from .models import Record
 
 
 @contextmanager
-def connect(db_url: str) -> Iterator[psycopg.Connection]:
+def connect(db_url: str, register: bool = True) -> Iterator[psycopg.Connection]:
+    """Connect, optionally registering the pgvector type adapter.
+
+    Pass register=False when the extension may not exist yet (bootstrap
+    paths); init_schema() registers it once the extension is in place.
+    """
     conn = psycopg.connect(db_url, autocommit=False)
     try:
-        register_vector(conn)
+        if register:
+            register_vector(conn)
         yield conn
     finally:
         conn.close()
@@ -41,6 +47,14 @@ def init_schema(conn: psycopg.Connection, dim: int) -> None:
         conn.commit()
     except psycopg.errors.InsufficientPrivilege:
         conn.rollback()
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM pg_type WHERE typname = 'vector'")
+        if cur.fetchone() is None:
+            raise RuntimeError(
+                "pgvector extension is not installed and this role may not "
+                "create it (pgvector is not 'trusted'). Run as superuser: "
+                "CREATE EXTENSION vector;"
+            )
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -62,6 +76,9 @@ def init_schema(conn: psycopg.Connection, dim: int) -> None:
         cur.execute("CREATE INDEX IF NOT EXISTS records_source_idx ON records (source)")
         cur.execute("CREATE INDEX IF NOT EXISTS records_ts_idx ON records (ts)")
     conn.commit()
+    # Now that the extension surely exists, the adapter can be registered on
+    # this connection (callers that connected with register=False rely on it).
+    register_vector(conn)
 
 
 def upsert(

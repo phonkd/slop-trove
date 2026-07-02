@@ -117,12 +117,15 @@ in
       ];
     };
 
-    # Install the pgvector extension as the postgres superuser (the app role
-    # may not have privilege to CREATE EXTENSION itself).
-    systemd.services.postgresql.postStart = lib.mkIf cfg.database.createLocally (
+    # Install the pgvector extension as the postgres superuser (pgvector is
+    # not "trusted", so the app role cannot CREATE EXTENSION itself). This
+    # must run on postgresql-setup.service — that's the unit that creates the
+    # database via ensureDatabases; postgresql.service's postStart runs before
+    # the database exists.
+    systemd.services.postgresql-setup.postStart = lib.mkIf cfg.database.createLocally (
       lib.mkAfter ''
-        ${config.services.postgresql.package}/bin/psql -d ${cfg.database.name} \
-          -tAc "CREATE EXTENSION IF NOT EXISTS vector" || true
+        ${config.services.postgresql.package}/bin/psql -d "${cfg.database.name}" \
+          -tAc "CREATE EXTENSION IF NOT EXISTS vector"
       ''
     );
 
@@ -130,9 +133,12 @@ in
     systemd.services.slop-trove-mcp = {
       description = "slop-trove MCP search server";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network-online.target" ] ++ lib.optional cfg.database.createLocally "postgresql.service";
+      # postgresql-setup creates the role/db and (via postStart above) the
+      # pgvector extension; init-db in ExecStartPre needs all of that.
+      after = [ "network-online.target" ]
+        ++ lib.optionals cfg.database.createLocally [ "postgresql.service" "postgresql-setup.service" ];
       wants = [ "network-online.target" ];
-      requires = lib.optional cfg.database.createLocally "postgresql.service";
+      requires = lib.optionals cfg.database.createLocally [ "postgresql.service" "postgresql-setup.service" ];
       environment = commonEnv;
       serviceConfig = {
         User = cfg.user;
@@ -148,8 +154,8 @@ in
     # ── Discord ingest (oneshot: `systemctl start slop-trove-ingest-discord`) ─
     systemd.services.slop-trove-ingest-discord = lib.mkIf cfg.sources.discord.enable {
       description = "slop-trove: ingest the Discord export";
-      after = lib.optional cfg.database.createLocally "postgresql.service";
-      requires = lib.optional cfg.database.createLocally "postgresql.service";
+      after = lib.optionals cfg.database.createLocally [ "postgresql.service" "postgresql-setup.service" ];
+      requires = lib.optionals cfg.database.createLocally [ "postgresql.service" "postgresql-setup.service" ];
       environment = commonEnv;
       serviceConfig = {
         Type = "oneshot";
