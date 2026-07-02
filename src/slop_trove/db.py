@@ -124,9 +124,9 @@ def search(
                    1 - (embedding <=> %(q)s::vector) AS score
             FROM records
             WHERE embedding IS NOT NULL
-              AND (%(source)s IS NULL OR source = %(source)s)
-              AND (%(start)s IS NULL OR ts >= %(start)s)
-              AND (%(end)s   IS NULL OR ts <= %(end)s)
+              AND (%(source)s::text IS NULL OR source = %(source)s::text)
+              AND (%(start)s::timestamptz IS NULL OR ts >= %(start)s::timestamptz)
+              AND (%(end)s::timestamptz   IS NULL OR ts <= %(end)s::timestamptz)
             ORDER BY embedding <=> %(q)s::vector
             LIMIT %(limit)s
             """,
