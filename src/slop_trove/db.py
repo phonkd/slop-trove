@@ -121,13 +121,13 @@ def search(
         cur.execute(
             """
             SELECT source, ts, text, metadata,
-                   1 - (embedding <=> %(q)s) AS score
+                   1 - (embedding <=> %(q)s::vector) AS score
             FROM records
             WHERE embedding IS NOT NULL
               AND (%(source)s IS NULL OR source = %(source)s)
               AND (%(start)s IS NULL OR ts >= %(start)s)
               AND (%(end)s   IS NULL OR ts <= %(end)s)
-            ORDER BY embedding <=> %(q)s
+            ORDER BY embedding <=> %(q)s::vector
             LIMIT %(limit)s
             """,
             {"q": query_vec, "source": source, "start": start, "end": end,
