@@ -6,7 +6,9 @@ import argparse
 import sys
 
 from . import config, db, embed
-from .ingest import discord
+from .ingest import claude, discord
+
+_INGESTERS = {"discord": discord.parse, "claude": claude.parse}
 
 
 def _batched(seq, n):
@@ -30,7 +32,8 @@ def cmd_init_db(_args) -> int:
 
 def cmd_ingest(args) -> int:
     cfg = config.load()
-    if args.source != "discord":
+    parse = _INGESTERS.get(args.source)
+    if parse is None:
         print(f"unknown source: {args.source}", file=sys.stderr)
         return 2
 
@@ -39,7 +42,7 @@ def cmd_ingest(args) -> int:
     seen = 0
     with db.connect(cfg.db_url, register=False) as conn:
         db.init_schema(conn, cfg.embed_dim)  # registers the vector adapter
-        for batch in _batched(discord.parse(args.path), args.batch_size):
+        for batch in _batched(parse(args.path), args.batch_size):
             vecs = embedder.embed([r.text for r in batch])
             total_new += db.upsert(conn, zip(batch, vecs))
             seen += len(batch)
@@ -55,7 +58,8 @@ def cmd_query(args) -> int:
     with db.connect(cfg.db_url) as conn:
         rows = db.search(conn, qvec, source=args.source, limit=args.limit)
     for r in rows:
-        ch = r["metadata"].get("channel_name", "?")
+        md = r["metadata"]
+        ch = md.get("channel_name") or md.get("conversation_name") or md.get("section") or "?"
         ts = r["ts"].isoformat() if r["ts"] else "?"
         snippet = r["text"].replace("\n", " ⏎ ")[:200]
         print(f"[{r['score']:.3f}] {r['source']}/{ch} {ts}\n  {snippet}\n")
@@ -78,7 +82,7 @@ def main() -> None:
     )
 
     pi = sub.add_parser("ingest", help="parse + embed a source export")
-    pi.add_argument("--source", default="discord")
+    pi.add_argument("--source", required=True, choices=sorted(_INGESTERS))
     pi.add_argument("--path", required=True, help="path to the export root")
     pi.add_argument("--batch-size", type=int, default=64)
     pi.set_defaults(func=cmd_ingest)

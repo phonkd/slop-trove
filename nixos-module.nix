@@ -93,6 +93,15 @@ in
         description = "Path to the unzipped Discord data package.";
       };
     };
+
+    sources.claude = {
+      enable = lib.mkEnableOption "the Claude.ai data export ingester (manual trigger)";
+      path = lib.mkOption {
+        type = lib.types.path;
+        example = "/var/lib/slop-trove/exports/claude";
+        description = "Path to the unzipped Claude.ai data export root.";
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -151,7 +160,7 @@ in
       };
     };
 
-    # ── Discord ingest (oneshot: `systemctl start slop-trove-ingest-discord`) ─
+    # ── Source ingesters (oneshot: `systemctl start slop-trove-ingest-<name>`) ─
     systemd.services.slop-trove-ingest-discord = lib.mkIf cfg.sources.discord.enable {
       description = "slop-trove: ingest the Discord export";
       after = lib.optionals cfg.database.createLocally [ "postgresql.service" "postgresql-setup.service" ];
@@ -162,6 +171,19 @@ in
         User = cfg.user;
         Group = cfg.group;
         ExecStart = "${lib.getExe pkg} ingest --source discord --path ${cfg.sources.discord.path}";
+      };
+    };
+
+    systemd.services.slop-trove-ingest-claude = lib.mkIf cfg.sources.claude.enable {
+      description = "slop-trove: ingest the Claude.ai data export";
+      after = lib.optionals cfg.database.createLocally [ "postgresql.service" "postgresql-setup.service" ];
+      requires = lib.optionals cfg.database.createLocally [ "postgresql.service" "postgresql-setup.service" ];
+      environment = commonEnv;
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.user;
+        Group = cfg.group;
+        ExecStart = "${lib.getExe pkg} ingest --source claude --path ${cfg.sources.claude.path}";
       };
     };
   };
