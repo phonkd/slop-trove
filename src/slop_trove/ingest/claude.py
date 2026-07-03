@@ -154,7 +154,12 @@ def parse(export_root: str | Path) -> Iterator[Record]:
 
     design_dir = root / "design_chats"
     if design_dir.is_dir():
+        # Exports that pass through a macOS tar can carry AppleDouble
+        # resource-fork sidecars ("._foo.json") alongside the real file;
+        # pathlib.glob (unlike a shell glob) matches those too.
         for f in sorted(design_dir.glob("*.json")):
+            if f.name.startswith("."):
+                continue
             conv = json.loads(f.read_text(encoding="utf-8"))
             yield from _chunk_conversation(conv, "claude_design_chat")
 
