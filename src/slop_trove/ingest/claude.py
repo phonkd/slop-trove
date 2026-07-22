@@ -58,8 +58,11 @@ def _message_text(m: dict) -> str:
     ]
     if parts:
         return "\n".join(parts)
-    files = [f.get("file_name", "?") for f in (m.get("files") or [])] + [
-        a.get("file_name", "?") for a in (m.get("attachments") or [])
+    # `.get("file_name", "?")` only defaults a *missing* key; an export can
+    # carry the key with an explicit null (a file shared without a name), so
+    # fall back with `or` to keep join() from choking on a NoneType.
+    files = [f.get("file_name") or "?" for f in (m.get("files") or [])] + [
+        a.get("file_name") or "?" for a in (m.get("attachments") or [])
     ]
     if files:
         return f"[shared file(s): {', '.join(files)}]"
