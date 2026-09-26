@@ -51,6 +51,25 @@ def cmd_ingest(args) -> int:
     return 0
 
 
+def cmd_purge(args) -> int:
+    cfg = config.load()
+    with db.connect(cfg.db_url, register=False) as conn:
+        if not args.yes:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) FROM records WHERE source = %s", (args.source,)
+                )
+                n = cur.fetchone()[0]
+            print(
+                f"would delete {n} rows for source={args.source!r}; "
+                f"re-run with --yes to actually do it"
+            )
+            return 0
+        removed = db.purge(conn, args.source)
+    print(f"deleted {removed} rows for source={args.source!r}")
+    return 0
+
+
 def cmd_query(args) -> int:
     cfg = config.load()
     embedder = embed.Embedder(cfg.embed_endpoint, cfg.embed_model, cfg.embed_dim)
@@ -86,6 +105,11 @@ def main() -> None:
     pi.add_argument("--path", required=True, help="path to the export root")
     pi.add_argument("--batch-size", type=int, default=64)
     pi.set_defaults(func=cmd_ingest)
+
+    pp = sub.add_parser("purge", help="delete every stored record for one source")
+    pp.add_argument("--source", required=True)
+    pp.add_argument("--yes", action="store_true", help="actually delete (default: dry run)")
+    pp.set_defaults(func=cmd_purge)
 
     pq = sub.add_parser("query", help="semantic search from the CLI")
     pq.add_argument("text")

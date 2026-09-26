@@ -13,6 +13,25 @@ let
     SLOP_TROVE_MCP_HOST = cfg.mcp.host;
     SLOP_TROVE_MCP_PORT = toString cfg.mcp.port;
   };
+
+  exportCfg = cfg.sources.discord.export;
+
+  # DCE takes the token from --token or from DISCORD_TOKEN. Use the env var:
+  # a user token is a full account credential, and argv is world-readable via
+  # `ps` and gets echoed into the journal on failure.
+  discordExportScript = pkgs.writeShellScript "slop-trove-export-discord" ''
+    set -euo pipefail
+    DISCORD_TOKEN="$(cat "$CREDENTIALS_DIRECTORY/discord-token")"
+    export DISCORD_TOKEN
+    export FUCK_RUSSIA=true   # suppress the interactive banner
+    mkdir -p ${lib.escapeShellArg exportCfg.outputPath}
+    exec ${lib.getExe exportCfg.package} \
+      ${if exportCfg.scope == "dm" then "exportdm" else "exportall"} \
+      --format Json \
+      --utc \
+      --parallel 1 \
+      --output ${lib.escapeShellArg (exportCfg.outputPath + "/")}
+  '';
 in
 {
   options.services.slop-trove = {
@@ -86,11 +105,55 @@ in
     };
 
     sources.discord = {
-      enable = lib.mkEnableOption "the Discord GDPR ingester (manual trigger)";
+      enable = lib.mkEnableOption "the Discord ingester (manual trigger)";
       path = lib.mkOption {
         type = lib.types.path;
         example = "/var/lib/slop-trove/exports/discord";
-        description = "Path to the unzipped Discord data package.";
+        description = ''
+          Path to a Discord export. The layout is auto-detected: an unzipped
+          GDPR data package (a `Messages/` dir — only your own messages), or a
+          DiscordChatExporter JSON output directory (both sides, with authors).
+        '';
+      };
+
+      # Acquiring the history is separate from ingesting it: the GDPR package
+      # is something you download by hand, DCE is something we can run.
+      export = {
+        enable = lib.mkEnableOption ''
+          a oneshot that pulls Discord history with DiscordChatExporter.
+
+          Note this drives the Discord API with a *user* token, which is a
+          self-bot under Discord's ToS. Deliberately opt-in
+        '';
+        package = lib.mkOption {
+          type = lib.types.package;
+          default = pkgs.discordchatexporter-cli;
+          defaultText = lib.literalExpression "pkgs.discordchatexporter-cli";
+        };
+        tokenFile = lib.mkOption {
+          type = lib.types.path;
+          example = "/run/secrets/discord-user-token";
+          description = ''
+            File holding the Discord user token. Read via systemd
+            LoadCredential and passed to DCE through DISCORD_TOKEN, never on
+            the command line.
+          '';
+        };
+        outputPath = lib.mkOption {
+          type = lib.types.path;
+          default = "${cfg.stateDir}/exports/discord-dce";
+          defaultText = lib.literalExpression ''"''${cfg.stateDir}/exports/discord-dce"'';
+          description = "Directory DCE writes one JSON per channel into.";
+        };
+        scope = lib.mkOption {
+          type = lib.types.enum [ "dm" "all" ];
+          default = "dm";
+          description = ''
+            "dm" exports direct and group DMs only (`exportdm`); "all" adds
+            every guild channel you can read (`exportall`), which is very much
+            larger and mostly public chatter.
+          '';
+        };
       };
     };
 
@@ -173,6 +236,27 @@ in
         ExecStart = "${lib.getExe pkg} ingest --source discord --path ${cfg.sources.discord.path}";
       };
     };
+
+    # Acquisition, not ingestion: writes JSON to disk, nothing touches the DB.
+    # Left as a oneshot rather than a timer until we know what a full run
+    # actually costs in wall-clock and rate-limit backoff.
+    systemd.services.slop-trove-export-discord =
+      lib.mkIf (cfg.sources.discord.enable && exportCfg.enable) {
+        description = "slop-trove: export Discord history (DiscordChatExporter)";
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+        serviceConfig = {
+          Type = "oneshot";
+          User = cfg.user;
+          Group = cfg.group;
+          LoadCredential = [ "discord-token:${exportCfg.tokenFile}" ];
+          ExecStart = discordExportScript;
+          # A first full export is hours of rate-limited paging; don't let the
+          # default start timeout shoot it partway through.
+          TimeoutStartSec = "infinity";
+          StateDirectory = "slop-trove";
+        };
+      };
 
     systemd.services.slop-trove-ingest-claude = lib.mkIf cfg.sources.claude.enable {
       description = "slop-trove: ingest the Claude.ai data export";

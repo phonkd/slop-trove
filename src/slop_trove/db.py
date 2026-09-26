@@ -107,6 +107,20 @@ def upsert(
     return inserted
 
 
+def purge(conn: psycopg.Connection, source: str) -> int:
+    """Delete every record belonging to one source. Returns rows removed.
+
+    Needed when a source is re-derived from better data: chunk boundaries (and
+    therefore content hashes) shift, so a plain re-ingest would leave the old
+    rows sitting alongside the new ones rather than replacing them.
+    """
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM records WHERE source = %s", (source,))
+        removed = cur.rowcount
+    conn.commit()
+    return removed
+
+
 def search(
     conn: psycopg.Connection,
     query_vec: list[float],
