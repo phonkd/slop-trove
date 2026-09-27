@@ -53,9 +53,8 @@ services.slop-trove = {
     enable = true;
     path = "/var/lib/slop-trove/exports/discord-dce";
     export = {
-      enable = true;                                  # see "Two Discord exports"
-      tokenFile = config.sops.secrets."discord-user-token".path;
-      scope = "dm";                                   # or "all" to add guilds
+      enable = true;    # see "Two Discord exports"; no timer, no stored token
+      scope = "dm";     # or "all" to add guilds
     };
   };
 };
@@ -76,7 +75,7 @@ they are **not** equivalent:
 
 | | GDPR data package | DiscordChatExporter (DCE) |
 |---|---|---|
-| How you get it | Request it from Discord, wait, download a ZIP | `systemctl start slop-trove-export-discord` |
+| How you get it | Request it from Discord, wait, download a ZIP | `sudo slop-trove-discord-export` |
 | Whose messages | **Only yours** — no author field, because there is nothing to disambiguate | Everyone's, with author names |
 | Chunk reads as | A monologue with no context | `"<author>: <text>"` dialogue turns |
 | Caveat | Half the conversation is simply absent | Uses a **user** token, i.e. a self-bot under Discord's ToS |
@@ -84,16 +83,40 @@ they are **not** equivalent:
 The GDPR path is kept as the no-token fallback. DCE is what you want if you
 care about what other people said to you.
 
-Because chunk boundaries (and therefore content hashes) differ between the two,
-DCE records are hash-keyed under a `dce:` prefix and will happily **coexist**
-with GDPR rows for the same channel — indexing your own messages twice. When
-switching a channel's history from one to the other, purge first:
+### Running an export
+
+Entirely imperative — **no timer, and no stored token**. A Discord user token is
+a full account credential, and this is a thing you run a handful of times a
+year, so it's handed over per run rather than kept in sops:
 
 ```sh
-slop-trove purge --source discord          # dry run, prints the row count
-slop-trove purge --source discord --yes    # actually delete
+sudo slop-trove-discord-export --reingest
+```
+
+It prompts for the token (hidden; `--token-file` and `DISCORD_TOKEN` also work),
+stages it `0400` in a root-only dir on tmpfs, and starts
+`slop-trove-export-discord`. The export runs as a unit rather than inline so it
+outlives the ssh session that kicked it off — follow it with
+`journalctl -fu slop-trove-export-discord`. The token is shredded by
+`ExecStopPost` however the run ends, success or failure.
+
+Set `export.tokenFile` to a secret's path only if you want it to run unattended.
+
+`--reingest` does the cutover for you. By hand it's:
+
+```sh
+systemctl start slop-trove-purge-discord    # drops every source=discord row
 systemctl start slop-trove-ingest-discord
 ```
+
+That purge is not optional housekeeping. Chunk boundaries — and therefore
+content hashes — differ between the two layouts, and DCE records are hash-keyed
+under a `dce:` prefix, so without it the old GDPR rows **coexist** with the new
+ones and every message you sent is in the index twice.
+
+Getting the token: Discord (desktop or web) → <kbd>Ctrl+Shift+I</kbd> → Network
+tab → click any request to `discord.com/api` → copy the `Authorization` request
+header verbatim.
 
 > During active dev, override the input to your local checkout instead of
 > pushing each change:
